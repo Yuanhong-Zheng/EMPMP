@@ -1,0 +1,7 @@
+data/
+垃圾桶/
+exprs/
+runs/
+pretrain_model/
+*.[p][y][c]
+.vscode/
