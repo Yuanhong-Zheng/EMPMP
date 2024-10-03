@@ -4,13 +4,12 @@ import warnings
 warnings.filterwarnings("ignore")
 import os, sys
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-from utils import AverageMeter
 import json
 import random
 import numpy as np
-from utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,update_metric,update_lr_multistep_mine
+from src.models.utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,update_metric,update_lr_multistep_mine,AverageMeter
 from config import config
-from model import siMLPe as Model
+from src.models.model import siMLPe as Model
 from lib.utils.logger import get_logger, print_and_log_info
 from lib.utils.pyt_utils import  ensure_dir
 import torch

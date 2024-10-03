@@ -20,7 +20,7 @@ C.seed = 304
 """please config ROOT_dir and user when u first using"""
 C.abs_dir = osp.dirname(osp.realpath(__file__))
 C.this_dir = C.abs_dir.split(osp.sep)[-1]
-C.repo_name = '整理后的代码'
+C.repo_name = '整理后的代码自用'
 C.root_dir = C.abs_dir[:C.abs_dir.index(C.repo_name) + len(C.repo_name)]
 
 
@@ -82,6 +82,7 @@ C.motion_mlp.num_layers = 48
 C.motion_mlp.with_normalization = True
 C.motion_mlp.spatial_fc_only = False
 C.motion_mlp.norm_axis = 'spatial'
+C.motion_mlp.p=3
 ## Motion Network FC In
 C.motion_fc_in = edict()
 C.motion_fc_in.in_features = C.motion.dim
@@ -107,7 +108,7 @@ C.num_workers = 8
 C.device="cuda"
 C.cos_lr_max=0.0001
 C.cos_lr_min=5e-8
-C.cos_lr_total_iters=200000
+C.cos_lr_total_iters=100000
 C.expr_dir=""
 C.weight_decay = 1e-4
 C.model_pth = None

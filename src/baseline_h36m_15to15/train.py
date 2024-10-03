@@ -1,12 +1,12 @@
 import argparse
 import os
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-print('当前工作目录：',os.getcwd())
 import json
 import numpy as np
-from utils import visuaulize,seed_set,get_dct_matrix,update_lr_multistep,gen_velocity
+from src.models.utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,predict
+from lr import update_lr_multistep
 from src.baseline_h36m_15to15.config import config
-from src.baseline_h36m_15to15.model import siMLPe as Model
+from src.models.model import siMLPe as Model
 from src.baseline_h36m_15to15.lib.datasets.dataset_mocap import DATA
 from lib.utils.logger import get_logger, print_and_log_info
 from lib.utils.pyt_utils import  ensure_dir
@@ -16,13 +16,14 @@ from src.baseline_h36m_15to15.test import mpjpe_test_regress,regress_pred
 import shutil
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--exp-name', type=str, default="复现：15->45,长时间观察", help='=exp name')
+parser.add_argument('--exp-name', type=str, default="*归一化测试", help='=exp name')
 parser.add_argument('--dataset', type=str, default="others", help='=exp name')
 parser.add_argument('--seed', type=int, default=888, help='=seed')
 parser.add_argument('--temporal-only', action='store_true', help='=temporal only')
 parser.add_argument('--layer-norm-axis', type=str, default='spatial', help='=layernorm axis')
 parser.add_argument('--with-normalization', type=bool,default=True, help='=use layernorm')
 parser.add_argument('--spatial-fc', action='store_true', help='=use only spatial fc')
+parser.add_argument('--normalization',type=bool,default=False, help='=use only spatial fc')
 parser.add_argument('--num', type=int, default=64, help='=num of blocks')
 parser.add_argument('--weight', type=float, default=1., help='=loss weight')
 parser.add_argument('--device', type=str, default="cuda:3")
@@ -52,6 +53,7 @@ acc_log.write(''.join('Seed : ' + str(args.seed) + '\n'))
 acc_log.flush()
 
 #配置
+config.normalization=args.normalization
 config.batch_size = args.batch_size
 config.dataset = args.dataset
 config.n_p = args.n_p
@@ -85,24 +87,7 @@ config.dct_m=dct_m
 config.idct_m=idct_m
 
 def train_step(h36m_motion_input, h36m_motion_target, model, optimizer, nb_iter, total_iter, max_lr, min_lr) :
-
-    if config.deriv_input:
-        b,p,n,c = h36m_motion_input.shape
-        h36m_motion_input_ = h36m_motion_input.clone()
-        #b,p,n,c
-        h36m_motion_input_ = torch.matmul(dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))
-    else:
-        h36m_motion_input_ = h36m_motion_input.clone()
-
-    motion_pred = model(h36m_motion_input_.to(config.device))
-    motion_pred = torch.matmul(idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c
-
-    if config.deriv_output:
-        offset = h36m_motion_input[:, :,-1:].to(config.device)#b,p,1,c
-        motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
-    else:
-        motion_pred = motion_pred[:, :config.t_pred]
-
+    motion_pred=predict(model,h36m_motion_input,config)#b,p,n,c
     b,p,n,c = h36m_motion_target.shape
     #预测的姿态
     motion_pred = motion_pred.reshape(b,p,n,config.n_joint,3).reshape(-1,3)
@@ -186,8 +171,8 @@ while (nb_iter + 1) < config.cos_lr_total_iters:
         
         loss, optimizer, current_lr = train_step(h36m_motion_input, h36m_motion_target, model, optimizer, nb_iter, config.cos_lr_total_iters, config.cos_lr_max, config.cos_lr_min)
         
-        if nb_iter == 99:
-            print("第一百个iter的loss:",loss)#0.22839394211769104
+        if nb_iter == 9:
+            print("第十个iter的loss:",loss)#0.22839394211769104
             
         avg_loss += loss
         avg_lr += current_lr

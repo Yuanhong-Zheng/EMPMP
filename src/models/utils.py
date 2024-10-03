@@ -41,16 +41,55 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
         
-def update_lr_multistep(nb_iter, total_iter, max_lr, min_lr, optimizer) :
-    if nb_iter > 1000000:
-        current_lr = 1e-5
+def predict(model,h36m_motion_input,config):
+    
+    if config.normalization:
+        h36m_motion_input_,h36m_motion_input,mean=data_normalization(h36m_motion_input)
+        h36m_motion_input_ = torch.matmul(config.dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))#归一化后dct
     else:
-        current_lr = 1e-4
+        h36m_motion_input_ = h36m_motion_input.clone()
+        #b,p,n,c
+        h36m_motion_input_ = torch.matmul(config.dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))
 
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = current_lr
+    motion_pred = model(h36m_motion_input_.to(config.device))
+    motion_pred = torch.matmul(config.idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c，idct
+    #反归一化
+    if config.normalization:
+        motion_pred=data_denormalization(motion_pred,h36m_motion_input,mean,config)
+    else:
+        offset = h36m_motion_input[:, :,-1:].to(config.device)#b,p,1,c
+        motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
+    return motion_pred
 
-    return optimizer, current_lr
+def data_denormalization(motion_pred,h36m_motion_input,mean,config=None):
+    b,p,_,c = motion_pred.shape
+    offset = h36m_motion_input[:, :,-1:].to(config.device)#b,p,1,c
+    motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
+    #mean:b,p,1,1,3
+    mean=mean.to(config.device)
+    motion_pred = motion_pred.reshape(b,p,config.t_pred,-1,3)#b,p,n,j,3
+    motion_pred = motion_pred + mean
+    motion_pred = motion_pred.reshape(b,p,config.t_pred,-1)#b,p,n,c
+    return motion_pred
+def data_normalization(h36m_motion_input,config=None):
+    b,p,n,c = h36m_motion_input.shape
+    h36m_motion_input_ = h36m_motion_input.clone()
+    
+    #归一化
+    h36m_motion_input_=h36m_motion_input_.reshape(b,p,n,-1,3)
+    #b,p,n,c
+    mean=h36m_motion_input_[:,:,:1,:,:].mean(dim=3,keepdim=True)#第一帧的平均位置,b,p,1,1,3
+    h36m_motion_input_=h36m_motion_input_-mean
+    h36m_motion_input_=h36m_motion_input_.reshape(b,p,n,-1)#回到b,p,n,c
+    
+    h36m_motion_input=h36m_motion_input.reshape(b,p,n,-1,3)
+    #b,p,n,c
+    h36m_motion_input=h36m_motion_input-mean
+    h36m_motion_input=h36m_motion_input.reshape(b,p,n,-1)#回到b,p,n,c
+    
+    return h36m_motion_input_,h36m_motion_input,mean
+
+
 
 def update_lr_multistep_mine(nb_iter, total_iter, max_lr, min_lr, optimizer) :
     
@@ -89,18 +128,25 @@ def seed_set(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     
-def visuaulize(data,prefix,output_dir):
+def visuaulize(data,prefix,output_dir,input_len=30,dataset='mocap'):
     for n in range(data.shape[0]):
         #B,P,T,J,K
         data_list=data[n]
-        body_edges = np.array(
-            [(0, 1), (1, 8), (8, 7), (7, 0),
-			 (0, 2), (2, 4),
-			 (1, 3), (3, 5),
-			 (7, 9), (9, 11),
-			 (8, 10), (10, 12),
-			 (6, 7), (6, 8)]
-        )
+        if dataset=='mocap':
+            body_edges = np.array(
+                [[0, 1], [1, 2], [2, 3], [0, 4],
+                [4, 5], [5, 6], [0, 7], [7, 8], [7, 9], [9, 10], [10, 11], [7, 12], [12, 13], [13, 14]]
+            )
+        else:
+            body_edges = np.array(
+                [(0, 1), (1, 8), (8, 7), (7, 0),
+                (0, 2), (2, 4),
+                (1, 3), (3, 5),
+                (7, 9), (9, 11),
+                (8, 10), (10, 12),
+                (6, 7), (6, 8)]
+            )
+
         fig = plt.figure(figsize=(10, 4.5))
         ax = fig.add_subplot(111, projection='3d')
 
@@ -123,7 +169,7 @@ def visuaulize(data,prefix,output_dir):
                         x = [data_list[j, i, edge[0], 0], data_list[j, i, edge[1], 0]]
                         y = [data_list[j, i, edge[0], 1], data_list[j, i, edge[1], 1]]
                         z = [data_list[j, i, edge[0], 2], data_list[j, i, edge[1], 2]]
-                        if i >= 15:
+                        if i >= input_len:
                             ax.plot(z, x, y, 'green')
                         else:
                             ax.plot(z, x, y, 'blue')

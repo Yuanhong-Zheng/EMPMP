@@ -3,9 +3,10 @@ import os
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 print('当前工作目录：',os.getcwd())
 import json
-from utils import visuaulize,seed_set,get_dct_matrix,update_lr_multistep,gen_velocity,update_metric
+from src.models_inter.utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,predict,update_metric
+from lr import update_lr_multistep
 from src.baseline_3dpw.config import config
-from model import siMLPe as Model
+from src.models_inter.model import siMLPe as Model
 from src.baseline_3dpw.lib.dataset.dataset_3dpw import get_3dpw_dataloader
 from src.baseline_3dpw.lib.utils.logger import get_logger, print_and_log_info
 from src.baseline_3dpw.lib.utils.pyt_utils import  ensure_dir
@@ -19,21 +20,22 @@ import warnings
 warnings.filterwarnings("ignore")
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--exp-name', type=str, default="复现：3dpw数据集,预训练", help='=exp name')
+parser.add_argument('--exp-name', type=str, default="3dpw数据集,无归一化,考虑inter", help='=exp name')
 parser.add_argument('--dataset', type=str, default="others", help='=exp name')
 parser.add_argument('--seed', type=int, default=888, help='=seed')
 parser.add_argument('--temporal-only', action='store_true', help='=temporal only')
 parser.add_argument('--layer-norm-axis', type=str, default='spatial', help='=layernorm axis')
 parser.add_argument('--with-normalization', type=bool,default=True, help='=use layernorm')
 parser.add_argument('--spatial-fc', action='store_true', help='=use only spatial fc')
+parser.add_argument('--normalization',type=bool,default=False, help='=use only spatial fc')
 parser.add_argument('--num', type=int, default=64, help='=num of blocks')
 parser.add_argument('--weight', type=float, default=1., help='=loss weight')
 parser.add_argument('--device', type=str, default="cuda:2")
 parser.add_argument('--debug', type=bool, default=False)
-parser.add_argument('--n_p', type=int, default=3)
-parser.add_argument('--model_path', type=str, default='pretrain_model/pretrain_best_128.pth')
+parser.add_argument('--n_p', type=int, default=2)
+parser.add_argument('--model_path', type=str, default=None)
 parser.add_argument('--vis_every', type=int, default=1000)
-parser.add_argument('--save_every', type=int, default=1000)
+parser.add_argument('--save_every', type=int, default=500)
 parser.add_argument('--print_every', type=int, default=100)
 parser.add_argument('--batch_size', type=int, default=128)
 args = parser.parse_args()
@@ -60,6 +62,7 @@ acc_best_log.write(''.join('Seed : ' + str(args.seed) + '\n'))
 acc_best_log.flush()
 
 #配置
+config.normalization=args.normalization
 config.batch_size = args.batch_size
 config.dataset = args.dataset
 config.n_p = args.n_p
@@ -75,6 +78,7 @@ config.motion_mlp.norm_axis = args.layer_norm_axis
 config.motion_mlp.spatial_fc_only = args.spatial_fc
 config.motion_mlp.with_normalization = args.with_normalization
 config.motion_mlp.num_layers = args.num
+config.motion_mlp.p=args.n_p
 config.snapshot_dir=os.path.join(expr_dir, 'snapshot')
 ensure_dir(config.snapshot_dir)#创建文件夹
 config.vis_dir=os.path.join(expr_dir, 'vis')
@@ -92,27 +96,8 @@ idct_m = torch.tensor(idct_m).float().to(config.device).unsqueeze(0)
 config.dct_m=dct_m
 config.idct_m=idct_m
 
-
-
 def train_step(h36m_motion_input, h36m_motion_target,padding_mask, model, optimizer, nb_iter, total_iter, max_lr, min_lr) :
-
-    if config.deriv_input:
-        b,p,n,c = h36m_motion_input.shape
-        h36m_motion_input_ = h36m_motion_input.clone()
-        #b,p,n,c
-        h36m_motion_input_ = torch.matmul(dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))
-    else:
-        h36m_motion_input_ = h36m_motion_input.clone()
-
-    motion_pred = model(h36m_motion_input_.to(config.device))
-    motion_pred = torch.matmul(idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c
-
-    if config.deriv_output:
-        offset = h36m_motion_input[:, :,-1:].to(config.device)#b,p,1,c
-        motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
-    else:
-        motion_pred = motion_pred[:, :config.t_pred]
-
+    motion_pred=predict(model,h36m_motion_input,config)#b,p,n,c
     b,p,n,c = h36m_motion_target.shape
     #预测的姿态
     motion_pred = motion_pred.reshape(b,p,n,config.n_joint,3).reshape(-1,3)
@@ -197,8 +182,8 @@ while (nb_iter + 1) < config.cos_lr_total_iters:
         
         loss, optimizer, current_lr = train_step(h36m_motion_input, h36m_motion_target,padding_mask, model, optimizer, nb_iter, config.cos_lr_total_iters, config.cos_lr_max, config.cos_lr_min)
         
-        if nb_iter == 99:
-            print("第100个iter的loss:",loss)#0.14632926881313324
+        if nb_iter == 9:
+            print("第10个iter的loss:",loss)#0.36073487997055054
             
         avg_loss += loss
         avg_lr += current_lr
@@ -263,7 +248,7 @@ while (nb_iter + 1) < config.cos_lr_total_iters:
                     motion_pred = motion_pred.reshape(b,p,n,config.n_joint,3)
                     h36m_motion_input=h36m_motion_input.reshape(b,p,config.t_his,config.n_joint,3)
                     motion=torch.cat([h36m_motion_input,motion_pred],dim=2).cpu().detach().numpy()
-                    visuaulize(motion,f"iter:{nb_iter}",config.vis_dir)
+                    visuaulize(motion,f"iter:{nb_iter}",config.vis_dir,input_len=15,dataset='mupots')
                 
                 model.train()
         if (nb_iter + 1) == config.cos_lr_total_iters :

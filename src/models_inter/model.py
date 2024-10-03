@@ -1,6 +1,7 @@
 import copy
+
 from torch import nn
-from mlp import build_mlps
+from .mlp import build_mlps
 from einops.layers.torch import Rearrange
 
 class siMLPe(nn.Module):
@@ -50,4 +51,5 @@ class siMLPe(nn.Module):
             motion_feats = self.motion_fc_out(motion_feats)#B,P,T,D
 
         return motion_feats
+
 

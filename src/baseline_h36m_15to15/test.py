@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-
+from src.models.utils import predict
 def mpjpe_test(config, model, eval_generator,dataset="mocap"):    
     device=config.device
     dct_m=config.dct_m
@@ -50,14 +50,6 @@ def regress_pred(model,motion_input,config):
         '''
         motion_input:b,p,n,jk
         '''
-        device=config.device
-        dct_m=config.dct_m
-        idct_m=config.idct_m
-        dct_len=config.dct_len
-        
-        b,p,n,c = motion_input.shape
-        # num_samples += b
-
         outputs = []
         step = config.motion.h36m_target_length_train#10
         
@@ -67,18 +59,7 @@ def regress_pred(model,motion_input,config):
             num_step = 45 // step#3
         for idx in range(num_step):
             with torch.no_grad():
-                if config.deriv_input:
-                    motion_input_ = motion_input.clone()
-                    motion_input_ = torch.matmul(dct_m[:, :, :dct_len], motion_input_.to(device))
-                else:
-                    motion_input_ = motion_input.clone()
-                    
-                output = model(motion_input_)
-                output = torch.matmul(idct_m[:, :config.motion.h36m_input_length, :], output)[:, :,:step, :]
-                
-                if config.deriv_output:
-                    output = output + motion_input[:,:, -1:].repeat(1,1,step,1)#b,p,n,c
-
+                output=predict(model,motion_input,config)
             outputs.append(output)
             motion_input = torch.cat([motion_input[:, :,step:], output], axis=2)
         motion_pred = torch.cat(outputs, axis=2)[:,:,:45]

@@ -12,8 +12,8 @@ class LN(nn.Module):
 
     def forward(self, x):
         #B,P,D,T
-        mean = x.mean(axis=2, keepdim=True)
-        var = ((x - mean) ** 2).mean(dim=2, keepdim=True)
+        mean = x.mean(axis=-2, keepdim=True)
+        var = ((x - mean) ** 2).mean(dim=-2, keepdim=True)
         std = (var + self.epsilon).sqrt()
         y = (x - mean) / std
         y = y * self.alpha + self.beta
@@ -93,16 +93,69 @@ class MLPblock(nn.Module):
         x = x + x_
 
         return x
+    
+def zero_module(module):
+    """
+    Zero out the parameters of a module and return it.
+    """
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
 
-class TransMLP(nn.Module):
-    def __init__(self, dim, seq, use_norm, use_spatial_fc, num_layers, layernorm_axis):
+class StylizationBlock(nn.Module):
+
+    def __init__(self, time_dim, num_p,dim):
         super().__init__()
-        self.mlps = nn.Sequential(*[
+        self.emb_layers = nn.Sequential(
+            nn.Linear(time_dim*num_p, 2 * time_dim),#pt->2t
+        )
+        self.norm = LN(dim)
+        self.out_layers = nn.Sequential(
+            zero_module(nn.Linear(time_dim, time_dim)),
+        )
+
+    def forward(self, x, x_global):
+        """
+        x: B, P,D,T
+        x_global: B,D,PT
+        """
+        x_global=x_global.unsqueeze(1)#B,1,D,PT
+        x_global = self.emb_layers(x_global)#b,1,d,2t
+        # scale: B,1, d, t / shift: B,1, d, t
+        scale, shift = torch.chunk(x_global, 2, dim=-1)
+        x = x* (1 + scale) + shift#B.P,D,T
+        x = self.out_layers(x)
+        x=self.norm(x)
+        return x
+    
+class TransMLP(nn.Module):
+    def __init__(self, dim, seq, use_norm, use_spatial_fc, num_layers, layernorm_axis,interaction_interval=2,p=3):
+        super().__init__()
+        self.local_mlps = nn.Sequential(*[
             MLPblock(dim, seq, use_norm, use_spatial_fc, layernorm_axis)
             for i in range(num_layers)])
-
+        self.global_mlps=nn.Sequential(*[
+            MLPblock(dim, seq*p, use_norm, use_spatial_fc, layernorm_axis)
+            for i in range(num_layers//interaction_interval)])
+        self.stylization_blocks = nn.ModuleList([
+            StylizationBlock(seq, p,dim) for _ in range(num_layers//interaction_interval)
+        ])
+        self.interaction_interval=interaction_interval
     def forward(self, x):
-        x = self.mlps(x)
+        # 初始化 x_global 与 x 一样
+        x_global = x.clone().transpose(1,2).flatten(-2)#B,D,PT
+        global_step = 0
+
+        # 逐层进行local和global的交互
+        for i, local_layer in enumerate(self.local_mlps):
+            x = local_layer(x)  # 计算 local MLP
+
+            # 每经过 interaction_interval 层 local_mlp，执行一次 global_mlp 的更新和交互
+            if (i + 1) % self.interaction_interval == 0 and global_step < len(self.global_mlps):
+                x_global = self.global_mlps[global_step](x_global)  # 动态计算 global MLP
+                x = x+self.stylization_blocks[global_step](x, x_global)  # 使用 StylizationBlock 进行交互
+                global_step += 1
+        
         return x
 
 def build_mlps(args):
@@ -117,6 +170,7 @@ def build_mlps(args):
         use_spatial_fc=args.spatial_fc_only,
         num_layers=args.num_layers,
         layernorm_axis=args.norm_axis,
+        p=args.p,
     )
 
 

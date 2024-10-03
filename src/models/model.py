@@ -1,15 +1,13 @@
 import copy
 
-import torch
 from torch import nn
-from mlp import build_mlps
+from .mlp import build_mlps
 from einops.layers.torch import Rearrange
 
 class siMLPe(nn.Module):
     def __init__(self, config):
         self.config = copy.deepcopy(config)
         super(siMLPe, self).__init__()
-        seq = self.config.motion_mlp.seq_len
         self.arr0 = Rearrange('b p n d -> b p d n')
         self.arr1 = Rearrange('b p d n -> b p n d')
 

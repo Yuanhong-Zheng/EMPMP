@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from utils import AverageMeter
+from src.models.utils import AverageMeter,predict
 from metrics import VIM, VAM
 
 def random_pred(config, model,iter):
@@ -22,23 +22,8 @@ def random_pred(config, model,iter):
     h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
     h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
     
-    if config.deriv_input:
-        b,p,n,c = h36m_motion_input.shape
-        h36m_motion_input_ = h36m_motion_input.clone()
-        #b,p,n,c
-        h36m_motion_input_ = torch.matmul(dct_m[:, :, :config.dct_len], h36m_motion_input_.to(device))
-    else:
-        h36m_motion_input_ = h36m_motion_input.clone()
-
-    motion_pred = model(h36m_motion_input_.to(device))
-    motion_pred = torch.matmul(idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c
-
-    if config.deriv_output:
-        offset = h36m_motion_input[:, :,-1:].to(device)#b,p,1,c
-        motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
-    else:
-        motion_pred = motion_pred[:, :config.t_pred]
-
+    motion_pred=predict(model,h36m_motion_input,config)
+    
     return h36m_motion_input[:1],motion_pred[:1]
 
 def random_pred_pretrain(config, model,iter,joint_to_use):
@@ -234,22 +219,7 @@ def vim_test(config, model, eval_generator,dataset="3dpw",return_all=True,select
         h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
         
-        if config.deriv_input:
-            b,p,n,c = h36m_motion_input.shape
-            h36m_motion_input_ = h36m_motion_input.clone()
-            #b,p,n,c
-            h36m_motion_input_ = torch.matmul(dct_m[:, :, :config.dct_len], h36m_motion_input_.to(device))
-        else:
-            h36m_motion_input_ = h36m_motion_input.clone()
-
-        motion_pred = model(h36m_motion_input_.to(device))
-        motion_pred = torch.matmul(idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c
-
-        if config.deriv_output:
-            offset = h36m_motion_input[:, :,-1:].to(device)#b,p,1,c
-            motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
-        else:
-            motion_pred = motion_pred[:, :config.t_pred]
+        motion_pred=predict(model,h36m_motion_input,config)
         #目标：b,n,p*c
         b,p,n,c = motion_pred.shape
         motion_pred = motion_pred.transpose(1,2).flatten(-2).squeeze(0).cpu().detach().numpy()
