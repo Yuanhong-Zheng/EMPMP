@@ -62,10 +62,17 @@ class DATA(Dataset):
             
             
     def iter_generator(self,  batch_size=128):#复现MRT,120帧间隔取60帧
-        for batch_idx in range(len(self.data)//batch_size):
-            start_idx=batch_idx*batch_size
-            data=self.data[start_idx:start_idx+batch_size,:,::2]
-            yield data[:,:,:self.t_his],data[:,:,self.t_his:]
+        total_batches = len(self.data) // batch_size
+        for batch_idx in range(total_batches):
+            start_idx = batch_idx * batch_size
+            data = self.data[start_idx:start_idx + batch_size, :, ::2]
+            yield data[:, :, :self.t_his], data[:, :, self.t_his:]
+        
+        # 处理最后一小部分数据
+        if len(self.data) % batch_size != 0:
+            start_idx = total_batches * batch_size
+            data = self.data[start_idx:, :, ::2]  # 最后的小部分数据
+            yield data[:, :, :self.t_his], data[:, :, self.t_his:]
             
     def __getitem__(self, idx):
         return self.data[idx][:,::2,:][:,:50],self.data[idx][:,::2,:][:,50:]

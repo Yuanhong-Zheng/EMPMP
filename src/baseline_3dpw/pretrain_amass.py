@@ -7,11 +7,12 @@ os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 import json
 import random
 import numpy as np
-from src.models.utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,update_metric,update_lr_multistep_mine,AverageMeter
-from config import config
-from src.models.model import siMLPe as Model
-from lib.utils.logger import get_logger, print_and_log_info
-from lib.utils.pyt_utils import  ensure_dir
+from src.models_inter.utils import AverageMeter,visuaulize,seed_set,get_dct_matrix,gen_velocity,predict,update_metric,getRandomPermuteOrder,getRandomRotatePoseTransform
+from lr import update_lr_multistep,update_lr_multistep_mine
+from src.baseline_3dpw.config import config
+from src.models_inter.model import siMLPe as Model
+from src.baseline_3dpw.lib.utils.logger import get_logger, print_and_log_info
+from src.baseline_3dpw.lib.utils.pyt_utils import  ensure_dir
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -26,23 +27,28 @@ from lib.utils.config_3dpw import *
 from lib.utils.util import rotate_Y
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--exp-name', type=str, default="预训练：3dpw数据集", help='=exp name')
+parser.add_argument('--exp-name', type=str, default="预训练：3dpw数据集,iter=200", help='=exp name')
 parser.add_argument('--dataset', type=str, default="others", help='=exp name')
 parser.add_argument('--seed', type=int, default=888, help='=seed')
 parser.add_argument('--temporal-only', action='store_true', help='=temporal only')
 parser.add_argument('--layer-norm-axis', type=str, default='spatial', help='=layernorm axis')
 parser.add_argument('--with-normalization', type=bool,default=True, help='=use layernorm')
 parser.add_argument('--spatial-fc', action='store_true', help='=use only spatial fc')
+parser.add_argument('--normalization',type=bool,default=True, help='对数据进行归一化')
+parser.add_argument('--norm_way',type=str,default='first', help='=use only spatial fc')
+parser.add_argument('--permute_p', type=bool, default=False, help='排列组合P维度')
+parser.add_argument('--random_rotate', type=bool, default=False, help='围绕世界中心进行随机旋转')
 parser.add_argument('--num', type=int, default=64, help='=num of blocks')
+parser.add_argument('--interaction_interval', type=int, default=16, help='local与Global交互的间隔，必须被num整除')
 parser.add_argument('--weight', type=float, default=1., help='=loss weight')
-parser.add_argument('--device', type=str, default="cuda:3")
+parser.add_argument('--device', type=str, default="cuda:2")
 parser.add_argument('--debug', type=bool, default=False)
-parser.add_argument('--n_p', type=int, default=3)
+parser.add_argument('--n_p', type=int, default=2)
 parser.add_argument('--model_path', type=str, default=None)
 parser.add_argument('--vis_every', type=int, default=5)
 parser.add_argument('--save_every', type=int, default=1)
 parser.add_argument('--print_every', type=int, default=1)
-parser.add_argument('--batch_size', type=int, default=512)
+parser.add_argument('--batch_size', type=int, default=128)
 args = parser.parse_args()
 
 # 创建文件夹
@@ -67,6 +73,8 @@ acc_best_log.write(''.join('Seed : ' + str(args.seed) + '\n'))
 acc_best_log.flush()
 
 #配置
+config.norm_way=args.norm_way
+config.normalization=args.normalization
 config.batch_size = args.batch_size
 config.dataset = args.dataset
 config.n_p = args.n_p
@@ -82,6 +90,8 @@ config.motion_mlp.norm_axis = args.layer_norm_axis
 config.motion_mlp.spatial_fc_only = args.spatial_fc
 config.motion_mlp.with_normalization = args.with_normalization
 config.motion_mlp.num_layers = args.num
+config.motion_mlp.n_p=args.n_p
+config.motion_mlp.interaction_interval = args.interaction_interval
 config.snapshot_dir=os.path.join(expr_dir, 'snapshot')
 ensure_dir(config.snapshot_dir)#创建文件夹
 config.vis_dir=os.path.join(expr_dir, 'vis')
@@ -99,27 +109,12 @@ idct_m = torch.tensor(idct_m).float().to(config.device).unsqueeze(0)
 config.dct_m=dct_m
 config.idct_m=idct_m
 
-
-
 def train_step(h36m_motion_input, h36m_motion_target,padding_mask, model, optimizer, nb_iter, total_iter, max_lr, min_lr) :
-
-    if config.deriv_input:
-        b,p,n,c = h36m_motion_input.shape
-        h36m_motion_input_ = h36m_motion_input.clone()
-        #b,p,n,c
-        h36m_motion_input_ = torch.matmul(dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))
-    else:
-        h36m_motion_input_ = h36m_motion_input.clone()
-
-    motion_pred = model(h36m_motion_input_.to(config.device))
-    motion_pred = torch.matmul(idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c
-
-    if config.deriv_output:
-        offset = h36m_motion_input[:, :,-1:].to(config.device)#b,p,1,c
-        motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
-    else:
-        motion_pred = motion_pred[:, :config.t_pred]
-
+    if args.random_rotate:
+        h36m_motion_input,h36m_motion_target=getRandomRotatePoseTransform(h36m_motion_input,h36m_motion_target)
+    if args.permute_p:
+        h36m_motion_input,h36m_motion_target=getRandomPermuteOrder(h36m_motion_input,h36m_motion_target)
+    motion_pred=predict(model,h36m_motion_input,config)#b,p,n,c
     b,p,n,c = h36m_motion_target.shape
     #预测的姿态
     motion_pred = motion_pred.reshape(b,p,n,config.n_joint,3).reshape(-1,3)
@@ -154,7 +149,6 @@ def train_step(h36m_motion_input, h36m_motion_target,padding_mask, model, optimi
     writer.add_scalar('LR/train', current_lr, nb_iter)
 
     return loss.item(), optimizer, current_lr
-
 #创建模型
 model = Model(config).to(device=config.device)
 model.train()
@@ -185,7 +179,6 @@ joint_to_use = np.array([1, 2, 4, 5, 7, 8, 15, 16, 17, 18, 19, 20, 21])
 optimizer = torch.optim.Adam(model.parameters(),
                              lr=config.cos_lr_max,
                              weight_decay=config.weight_decay)
-
 #创建logger
 def default_serializer(obj):
     if isinstance(obj, torch.Tensor):
@@ -196,7 +189,7 @@ logger = get_logger(config.log_file, 'train')
 print_and_log_info(logger, json.dumps(config, indent=4, sort_keys=True,default=default_serializer))
 
 if config.model_pth is not None :
-    state_dict = torch.load(config.model_pth)
+    state_dict = torch.load(config.model_pth,map_location=config.device)
     model.load_state_dict(state_dict, strict=True)
     print_and_log_info(logger, "Loading model path from {} ".format(config.model_pth))
 
@@ -313,7 +306,7 @@ while (nb_iter + 1) < config.epoch:
                 motion_pred = motion_pred.reshape(b,p,n,config.n_joint,3)
                 h36m_motion_input=h36m_motion_input.reshape(b,p,config.t_his,config.n_joint,3)
                 motion=torch.cat([h36m_motion_input,motion_pred],dim=2).cpu().detach().numpy()
-                visuaulize(motion,f"iter:{nb_iter}",config.vis_dir)
+                visuaulize(motion,f"iter:{nb_iter}",config.vis_dir,dataset='3dpw')
             
             model.train()
             

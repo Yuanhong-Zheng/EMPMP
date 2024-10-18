@@ -57,7 +57,8 @@ def load_data_3dpw_multiperson(split):
     sum=0
     two=0
     one=0
-    for pkl in os.listdir(path_to_data('3dpw', 'sequenceFiles', SPLIT_3DPW[split])):
+    temp=['downtown_bar_00.pkl', 'downtown_runForBus_00.pkl', 'downtown_walkUphill_00.pkl', 'downtown_enterShop_00.pkl', 'downtown_stairs_00.pkl', 'downtown_windowShopping_00.pkl', 'downtown_car_00.pkl', 'downtown_upstairs_00.pkl', 'downtown_weeklyMarket_00.pkl', 'downtown_cafe_00.pkl', 'downtown_sitOnStairs_00.pkl', 'flat_packBags_00.pkl', 'downtown_rampAndStairs_00.pkl', 'office_phoneCall_00.pkl', 'downtown_arguing_00.pkl', 'outdoors_fencing_01.pkl', 'downtown_warmWelcome_00.pkl', 'downtown_bus_00.pkl', 'downtown_crossStreets_00.pkl', 'downtown_downstairs_00.pkl', 'downtown_walking_00.pkl', 'downtown_walkBridge_01.pkl', 'downtown_runForBus_01.pkl', 'flat_guitar_01.pkl']
+    for pkl in temp:
         with open(path_to_data('3dpw', 'sequenceFiles', SPLIT_3DPW[split], pkl), 'rb') as reader:
             annotations = pickle.load(reader, encoding='latin1')
 

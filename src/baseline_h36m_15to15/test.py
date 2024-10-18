@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from src.models.utils import predict
+from src.models_dual_inter_add.utils import predict
 def mpjpe_test(config, model, eval_generator,dataset="mocap"):    
     device=config.device
     dct_m=config.dct_m
@@ -80,27 +80,30 @@ def mpjpe_test_regress(config, model, eval_generator,dataset="mocap"):
     mpjpe_res=[]
     
     for (h36m_motion_input, h36m_motion_target) in eval_generator:
-        h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
+        h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()#b,p,t,jk
         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
 
         motion_pred = regress_pred(model,h36m_motion_input,config)
 
         b,p,n,c = motion_pred.shape
-        motion_pred = motion_pred.reshape(b,p,n,n_joint,3).squeeze(0).cpu().detach()
-        h36m_motion_target=h36m_motion_target.reshape(b,p,n,n_joint,3).squeeze(0).cpu().detach()
+        motion_pred = motion_pred.reshape(b,p,n,n_joint,3).cpu().detach()
+        h36m_motion_target=h36m_motion_target.reshape(b,p,n,n_joint,3).cpu().detach()#b,p,t,j,3
         
         if dataset=="mocap":
-            loss1=torch.sqrt(((motion_pred[:,:15]/1.8 - h36m_motion_target[:,:15]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().tolist()
-            loss2=torch.sqrt(((motion_pred[:,:30]/1.8 - h36m_motion_target[:,:30]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().tolist()
-            loss3=torch.sqrt(((motion_pred[:,:45]/1.8 - h36m_motion_target[:,:45]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().tolist()
+            loss1=torch.sqrt(((motion_pred[:,:,:15]/1.8 - h36m_motion_target[:,:,:15]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+            loss2=torch.sqrt(((motion_pred[:,:,:30]/1.8 - h36m_motion_target[:,:,:30]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+            loss3=torch.sqrt(((motion_pred[:,:,:45]/1.8 - h36m_motion_target[:,:,:45]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
         else:
-            loss1=torch.sqrt(((motion_pred[:,:15] - h36m_motion_target[:,:15]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().tolist()
-            loss2=torch.sqrt(((motion_pred[:,:30] - h36m_motion_target[:,:30]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().tolist()
-            loss3=torch.sqrt(((motion_pred[:,:45] - h36m_motion_target[:,:45]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().tolist()
+            loss1=torch.sqrt(((motion_pred[:,:,:15] - h36m_motion_target[:,:,:15]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+            loss2=torch.sqrt(((motion_pred[:,:,:30] - h36m_motion_target[:,:,:30]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+            loss3=torch.sqrt(((motion_pred[:,:,:45] - h36m_motion_target[:,:,:45]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+        loss1=np.mean(loss1,axis=-1).tolist()
+        loss2=np.mean(loss2,axis=-1).tolist()
+        loss3=np.mean(loss3,axis=-1).tolist()
         
-        loss_list1.append(np.mean(loss1))#+loss1
-        loss_list2.append(np.mean(loss2))#+loss2
-        loss_list3.append(np.mean(loss3))#+loss3
+        loss_list1.extend(loss1)
+        loss_list2.extend(loss2)
+        loss_list3.extend(loss3)
         
     mpjpe_res.append(np.mean(loss_list1))
     mpjpe_res.append(np.mean(loss_list2))

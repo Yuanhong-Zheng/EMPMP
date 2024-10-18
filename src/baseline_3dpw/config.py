@@ -101,14 +101,14 @@ C.motion_fc_out.init_w_trunc_normal = True
 C.motion_fc_out.temporal_fc = False
 
 """Train Config"""
-C.epoch=100
+C.epoch=200
 C.vis_every=500
 C.batch_size = 256
 C.num_workers = 8
 C.device="cuda"
 C.cos_lr_max=0.0001
 C.cos_lr_min=5e-8
-C.cos_lr_total_iters=100000
+C.cos_lr_total_iters=200000
 C.expr_dir=""
 C.weight_decay = 1e-4
 C.model_pth = None

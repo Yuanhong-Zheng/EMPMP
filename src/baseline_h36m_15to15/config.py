@@ -82,6 +82,7 @@ C.motion_mlp.num_layers = 64
 C.motion_mlp.with_normalization = True
 C.motion_mlp.spatial_fc_only = False
 C.motion_mlp.norm_axis = 'spatial'
+C.motion_mlp.p = 3
 ## Motion Network FC In
 C.motion_fc_in = edict()
 C.motion_fc_in.in_features = C.motion.dim

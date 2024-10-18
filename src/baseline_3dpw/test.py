@@ -56,22 +56,7 @@ def random_pred_pretrain(config, model,iter,joint_to_use):
     h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
     h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
     
-    if config.deriv_input:
-        b,p,n,c = h36m_motion_input.shape
-        h36m_motion_input_ = h36m_motion_input.clone()
-        #b,p,n,c
-        h36m_motion_input_ = torch.matmul(dct_m[:, :, :config.dct_len], h36m_motion_input_.to(device))
-    else:
-        h36m_motion_input_ = h36m_motion_input.clone()
-
-    motion_pred = model(h36m_motion_input_.to(device))
-    motion_pred = torch.matmul(idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c
-
-    if config.deriv_output:
-        offset = h36m_motion_input[:, :,-1:].to(device)#b,p,1,c
-        motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
-    else:
-        motion_pred = motion_pred[:, :config.t_pred]
+    motion_pred=predict(model,h36m_motion_input,config)
 
     return h36m_motion_input[:1],motion_pred[:1]
 
@@ -252,8 +237,10 @@ def vim_test(config, model, eval_generator,dataset="3dpw",return_all=True,select
                     vim_avg.update(vim_100, 1)
     
     return vim_avg.avg[select_frames]
-
-def vim_test_pretrain(config, model, test_loader,joint_to_use,dataset="3dpw",return_all=True,select_frames=[1, 3, 7, 9, 13]):    
+ 
+def vim_test_pretrain(config, model, test_loader,joint_to_use,dataset="3dpw",return_all=True,select_frames=[1, 3, 7, 9, 13]):  
+    # print('begin vim test')  
+    
     device=config.device
     dct_m=config.dct_m
     idct_m=config.idct_m
@@ -282,31 +269,17 @@ def vim_test_pretrain(config, model, test_loader,joint_to_use,dataset="3dpw",ret
         h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
         
-        if config.deriv_input:
-            b,p,n,c = h36m_motion_input.shape
-            h36m_motion_input_ = h36m_motion_input.clone()
-            #b,p,n,c
-            h36m_motion_input_ = torch.matmul(dct_m[:, :, :config.dct_len], h36m_motion_input_.to(device))
-        else:
-            h36m_motion_input_ = h36m_motion_input.clone()
+        motion_pred=predict(model,h36m_motion_input,config)
 
-        motion_pred = model(h36m_motion_input_.to(device))
-        motion_pred = torch.matmul(idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c
-
-        if config.deriv_output:
-            offset = h36m_motion_input[:, :,-1:].to(device)#b,p,1,c
-            motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
-        else:
-            motion_pred = motion_pred[:, :config.t_pred]
         #目标：b,n,p*c
         b,p,n,c = motion_pred.shape
         motion_pred = motion_pred.transpose(1,2).flatten(-2).squeeze(0).cpu().detach().numpy()
         h36m_motion_target=h36m_motion_target.transpose(1,2).flatten(-2).squeeze(0).cpu().detach().numpy()
         
         for person in range(p):
-            if person==1:
-                # print("跳过第二个人")
-                continue
+            # if person==1:
+            #     # print("跳过第二个人")
+            #     continue
             JK=c
             J=config.n_joint
             K=JK//J
@@ -328,5 +301,5 @@ def vim_test_pretrain(config, model, test_loader,joint_to_use,dataset="3dpw",ret
                 else:
                     vim_100 = vim_score[2]
                     vim_avg.update(vim_100, 1)
-    
+    # print('end vim test')
     return vim_avg.avg[select_frames]

@@ -3,10 +3,10 @@ import os
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 import json
 import numpy as np
-from src.models.utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,predict
+from src.models_dual_inter_add.utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,predict,getRandomPermuteOrder,getRandomRotatePoseTransform,getRandomScaleTransform
 from lr import update_lr_multistep
 from src.baseline_h36m_15to15.config import config
-from src.models.model import siMLPe as Model
+from src.models_dual_inter_add.model import siMLPe as Model
 from src.baseline_h36m_15to15.lib.datasets.dataset_mocap import DATA
 from lib.utils.logger import get_logger, print_and_log_info
 from lib.utils.pyt_utils import  ensure_dir
@@ -16,7 +16,7 @@ from src.baseline_h36m_15to15.test import mpjpe_test_regress,regress_pred
 import shutil
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--exp-name', type=str, default="*归一化测试", help='=exp name')
+parser.add_argument('--exp-name', type=str, default="15->15,inter_dual_add(res_global),interval=16,no norm，排列P,random_rotate", help='=exp name')
 parser.add_argument('--dataset', type=str, default="others", help='=exp name')
 parser.add_argument('--seed', type=int, default=888, help='=seed')
 parser.add_argument('--temporal-only', action='store_true', help='=temporal only')
@@ -24,16 +24,21 @@ parser.add_argument('--layer-norm-axis', type=str, default='spatial', help='=lay
 parser.add_argument('--with-normalization', type=bool,default=True, help='=use layernorm')
 parser.add_argument('--spatial-fc', action='store_true', help='=use only spatial fc')
 parser.add_argument('--normalization',type=bool,default=False, help='=use only spatial fc')
+parser.add_argument('--norm_way',type=str,default='first', help='=use only spatial fc')
+parser.add_argument('--permute_p', type=bool, default=True, help='排列组合P维度')
+parser.add_argument('--random_rotate', type=bool, default=True, help='围绕世界中心进行随机旋转')
+parser.add_argument('--scale', type=bool, default=False, help='缩放人体数据')
 parser.add_argument('--num', type=int, default=64, help='=num of blocks')
+parser.add_argument('--interaction_interval', type=int, default=16, help='local与Global交互的间隔，必须被num整除')
 parser.add_argument('--weight', type=float, default=1., help='=loss weight')
 parser.add_argument('--device', type=str, default="cuda:3")
 parser.add_argument('--debug', type=bool, default=False)
 parser.add_argument('--n_p', type=int, default=3)
 parser.add_argument('--model_path', type=str, default=None)
-parser.add_argument('--vis_every', type=int, default=1000)
-parser.add_argument('--save_every', type=int, default=1000)
+parser.add_argument('--vis_every', type=int, default=100000000)
+parser.add_argument('--save_every', type=int, default=250)
 parser.add_argument('--print_every', type=int, default=100)
-parser.add_argument('--batch_size', type=int, default=256)
+parser.add_argument('--batch_size', type=int, default=128)
 args = parser.parse_args()
 
 # 创建文件夹
@@ -53,6 +58,7 @@ acc_log.write(''.join('Seed : ' + str(args.seed) + '\n'))
 acc_log.flush()
 
 #配置
+config.norm_way=args.norm_way
 config.normalization=args.normalization
 config.batch_size = args.batch_size
 config.dataset = args.dataset
@@ -69,6 +75,8 @@ config.motion_mlp.norm_axis = args.layer_norm_axis
 config.motion_mlp.spatial_fc_only = args.spatial_fc
 config.motion_mlp.with_normalization = args.with_normalization
 config.motion_mlp.num_layers = args.num
+config.motion_mlp.n_p = args.n_p
+config.motion_mlp.interaction_interval = args.interaction_interval
 config.snapshot_dir=os.path.join(expr_dir, 'snapshot')
 ensure_dir(config.snapshot_dir)#创建文件夹
 config.vis_dir=os.path.join(expr_dir, 'vis')
@@ -87,6 +95,12 @@ config.dct_m=dct_m
 config.idct_m=idct_m
 
 def train_step(h36m_motion_input, h36m_motion_target, model, optimizer, nb_iter, total_iter, max_lr, min_lr) :
+    if args.random_rotate:
+        h36m_motion_input,h36m_motion_target=getRandomRotatePoseTransform(h36m_motion_input,h36m_motion_target)
+    if args.scale:
+        h36m_motion_input,h36m_motion_target=getRandomScaleTransform(h36m_motion_input,h36m_motion_target,0.5,1.5)
+    if args.permute_p:
+        h36m_motion_input,h36m_motion_target=getRandomPermuteOrder(h36m_motion_input,h36m_motion_target)
     motion_pred=predict(model,h36m_motion_input,config)#b,p,n,c
     b,p,n,c = h36m_motion_target.shape
     #预测的姿态
@@ -188,17 +202,17 @@ while (nb_iter + 1) < config.cos_lr_total_iters:
         #保存模型并评估模型
         if (nb_iter + 1) % config.save_every ==  0 or nb_iter==0: 
             with torch.no_grad():
-                torch.save(model.state_dict(), config.snapshot_dir + '/model-iter-' + str(nb_iter + 1) + '.pth')
+                # torch.save(model.state_dict(), config.snapshot_dir + '/model-iter-' + str(nb_iter + 1) + '.pth')
                 model.eval()
                 if config.dataset=="h36m":
                     pass
                 else:
                     print("begin test")
                     
-                    eval_generator_mocap = eval_dataset_mocap.iter_generator(batch_size=1)
+                    eval_generator_mocap = eval_dataset_mocap.iter_generator(batch_size=config.batch_size)
                     mpjpe_res_mocap=mpjpe_test_regress(config, model, eval_generator_mocap,dataset="mocap")
                     
-                    eval_generator_mupots = eval_dataset_mupots.iter_generator(batch_size=1)
+                    eval_generator_mupots = eval_dataset_mupots.iter_generator(batch_size=config.batch_size)
                     mpjpe_res_mupots=mpjpe_test_regress(config, model, eval_generator_mupots,dataset="mupots")
                     
                     print(f"iter:{nb_iter},mpjpe_mocap:",mpjpe_res_mocap)#50->10:[0.09955118384316544];40->20:[0.16432605807057066];15->45:[0.13087681411770366, 0.2059432791082266, 0.25980609033101554]

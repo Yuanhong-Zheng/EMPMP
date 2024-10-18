@@ -7,6 +7,58 @@ from io import BytesIO
 import random
 import torch
 from easydict import EasyDict as edict
+from torchvision import transforms
+
+def Get_RC_Data(motion_input,motion_target):#B,P,T,JK
+    #加上速度维度
+    b,p,t_in,jk=motion_input.shape
+    _,_,t_out,_=motion_target.shape
+    t=t_in+t_out
+    k=3
+    j=jk//k
+    motion=torch.cat((motion_input,motion_target),dim=2)#B,P,T_in+T_out,JK
+    
+    vel_data = np.zeros((b, p, t, j,k))#b,p,T,J,3
+    vel_data[:,:,1:,:,:] = (torch.roll(motion, shifts=-1, dims=2) - motion)[:,:,:-1,:,:]#roll是在时间轴上向左滚动一帧，vel_data的第零帧为0
+    data = torch.cat((motion, vel_data), dim=-1)#B,P,T,J,6
+    data=data.transpose(1,2)#B,T,P,J,6
+    camera_vel = data[:, 1:t, :, :, 3:].mean(dim=(1, 2, 3)) # B, 3
+    data[..., 3:] -= camera_vel[:, None, None, None]
+    data[..., :3] = data[:, 0:1, :, :, :3] + data[..., 3:].cumsum(dim=1)
+    data=data.transpose(1,2)[...,:3].reshape(b,p,t,jk)#B,P,T,jk
+    return data, camera_vel#b,3
+def getRandomScaleTransform(joints_input,joints_target,r1=0.8, r2=1.2):
+    #scale = (r1 - r2) * torch.rand(1) + r2
+    scale = (r1 - r2) * torch.rand(joints_input.shape[0]).reshape(-1, 1, 1, 1) + r2
+    return joints_input * scale.to(joints_input.device), joints_target * scale.to(joints_target.device)
+def getRandomRotatePoseTransform(joints_input, joints_target):
+    """
+    Performs a random rotation about the origin (0, 0, 0)
+    """
+
+    K=3
+    B, P, T_in,JK = joints_input.shape
+    _,_,T_out,_=joints_target.shape
+    J=JK//K
+    
+    joints_input=joints_input.reshape(B,P,T_in,J,K)#B,P,T,J,K
+    joints_target=joints_target.reshape(B,P,T_out,J,K)#B,P,T,J,K
+    
+    angles = torch.deg2rad(torch.rand(B)*360)
+
+    rotation_matrix = torch.zeros(B, 3, 3).to(joints_input.device)
+    rotation_matrix[:,1,1] = 1
+    rotation_matrix[:,0,0] = torch.cos(angles)
+    rotation_matrix[:,0,2] = torch.sin(angles)
+    rotation_matrix[:,2,0] = -torch.sin(angles)
+    rotation_matrix[:,2,2] = torch.cos(angles)
+
+    joints_input = torch.bmm(joints_input.reshape(B, -1, 3).float(), rotation_matrix)
+    joints_input = joints_input.reshape(B,P,T_in,JK)
+    
+    joints_target = torch.bmm(joints_target.reshape(B, -1, 3).float(), rotation_matrix)
+    joints_target = joints_target.reshape(B,P,T_out,JK)
+    return joints_input,joints_target
 
 def update_metric(metric_dict,metric,value,iter):
     if not hasattr(metric_dict, metric):
@@ -23,7 +75,26 @@ def update_metric(metric_dict,metric,value,iter):
             setattr(metric_dict, 'val', value)
             setattr(metric_dict, 'iter', iter)
             setattr(metric_dict, 'avg', value.mean())
+            
+def getRandomPermuteOrder(joints_input, joints_target):
+    """
+    Randomly permutes persons across the input token dimension. This helps
+    expose all learned embeddings to a variety of poses.
+    """
+    K=3
+    B,N,F_in,JK=joints_input.shape
+    _,_,F_out,_=joints_target.shape
+    J=JK//K
+    perm = torch.argsort(torch.rand(B, N), dim=-1).reshape(B, N)
+    idx = torch.arange(B).unsqueeze(-1)
     
+    joints_input = joints_input.view(B, N, F_in, J, K)[idx, perm]
+    joints_input = joints_input.reshape(B, N, F_in, JK) 
+    
+    joints_target = joints_target.view(B, N, F_out, J, K)[idx, perm]
+    joints_target = joints_target.reshape(B, N, F_out, JK)
+    return joints_input,joints_target
+
 class AverageMeter(object):
     """
     From https://github.com/mkocabas/VIBE/blob/master/lib/core/trainer.py
@@ -42,9 +113,8 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
         
 def predict(model,h36m_motion_input,config):
-    
     if config.normalization:
-        h36m_motion_input_,h36m_motion_input,mean=data_normalization(h36m_motion_input)
+        h36m_motion_input_,h36m_motion_input,mean=data_normalization(h36m_motion_input,config=None,way=config.norm_way)
         h36m_motion_input_ = torch.matmul(config.dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))#归一化后dct
     else:
         h36m_motion_input_ = h36m_motion_input.clone()
@@ -71,14 +141,17 @@ def data_denormalization(motion_pred,h36m_motion_input,mean,config=None):
     motion_pred = motion_pred + mean
     motion_pred = motion_pred.reshape(b,p,config.t_pred,-1)#b,p,n,c
     return motion_pred
-def data_normalization(h36m_motion_input,config=None):
+def data_normalization(h36m_motion_input,config=None,way='all'):
     b,p,n,c = h36m_motion_input.shape
     h36m_motion_input_ = h36m_motion_input.clone()
     
     #归一化
     h36m_motion_input_=h36m_motion_input_.reshape(b,p,n,-1,3)
     #b,p,n,c
-    mean=h36m_motion_input_[:,:,:1,:,:].mean(dim=3,keepdim=True)#第一帧的平均位置,b,p,1,1,3
+    if way=='all':
+        mean=h36m_motion_input_[:,:,:1,:,:].mean(dim=3,keepdim=True)#第一帧的平均位置,b,p,1,1,3
+    elif way=='first':
+        mean=h36m_motion_input_[:,:1,:1,:,:].mean(dim=3,keepdim=True)#第一个人第一帧的平均位置,b,1,1,1,3
     h36m_motion_input_=h36m_motion_input_-mean
     h36m_motion_input_=h36m_motion_input_.reshape(b,p,n,-1)#回到b,p,n,c
     
