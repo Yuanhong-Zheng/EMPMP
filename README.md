@@ -31,6 +31,13 @@ Download the following dataset files from our [GitHub Releases](../../releases):
 
 Place these files directly in the `data/` directory.
 
+#### Pretrained Model Files from GitHub Release
+Download the following pretrained model files from our [GitHub Releases](../../releases):
+- `pt_norc.pth`
+- `pt_rc.pth`
+
+Place these files in the `pt_ckpts/` directory.
+
 #### 3DPW Dataset Files
 Download the 3DPW dataset from the official [website](https://virtualhumans.mpi-inf.mpg.de/3DPW/)
 
