@@ -78,32 +78,7 @@ class DATA(Dataset):
         return self.data[idx][:,::2,:][:,:50],self.data[idx][:,::2,:][:,50:]
     def __len__(self):
         return len(self.data)
-    def visuaulize(self,model,prefix,output_dir,cfg):
-        with torch.no_grad():
-            sample=self.sample()
-            # torch.save(sample, 'tensor.pt')
-            # sample = torch.load('tensor.pt')
-            gt=c(sample)#1,P,T,J,3
-            
-            input_np=sample[:,:,:cfg.t_his,:,:]
-            input=torch.tensor(input_np,dtype=cfg.dtype).to(device=cfg.device)#B,P,t_his,J,3
-            results=input[:,:,-1:,:,:].flatten(-2)
-            # pad_idx=list(range(cfg.t_his))+[cfg.t_his-1]*cfg.t_pred
-            # input_pad=input[:,:,pad_idx,:,:].flatten(-2)#B,P,T,3J
-            input_pad=input.flatten(-2)#not really
-            input_dct=dct.dct(input_pad)
-            valid_lens=None
-            output=model(input_dct[:,:,1:15,:]-input_dct[:,:,:14,:],dct.idct(input_dct[:,:,-1:,:]),valid_lens)#B,P,T,3J
-            output=dct.idct(output)
-            for i in range(1,16):
-                results=torch.cat([results,input[:,:,-1:,:,:].flatten(-2)+torch.sum(output[:,:,:i,:],dim=2,keepdim=True)],dim=2)
-            results=results[:,:,1:,:].reshape(results.shape[0],results.shape[1],15,cfg.n_joint,-1)
-            # output=output.reshape(output.shape[0],output.shape[1],output.shape[2],cfg.n_joint,-1)#B,P,T,J,3
-            results=torch.cat((input,results),dim=2)
-            results=results.detach().cpu().numpy()
 
-            visuaulize(gt,prefix+"_gt",output_dir)
-            visuaulize(results,prefix,output_dir)
 def main():
     # 创建训练集实例
     train_dataset = DATA(mode="train", t_his=15, t_pred=45,n_p=3)

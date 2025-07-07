@@ -280,7 +280,6 @@ def create_dataset(dataset_name, **args):
     else:
         raise ValueError(f"Dataset with name '{dataset_name}' not found.")
     print(f"Created dataset {dataset_name} with {len(dataset)} samples.")
-    print(f"{dataset_name}数据集第一个样本的和为:",dataset[0][0].sum())
     return dataset
 
 

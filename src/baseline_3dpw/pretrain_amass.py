@@ -7,10 +7,10 @@ os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 import json
 import random
 import numpy as np
-from src.models_inter.utils import AverageMeter,visuaulize,seed_set,get_dct_matrix,gen_velocity,predict,update_metric,getRandomPermuteOrder,getRandomRotatePoseTransform
+from src.models_dual_inter_traj.utils import AverageMeter,visuaulize,seed_set,get_dct_matrix,gen_velocity,predict,update_metric,getRandomPermuteOrder,getRandomRotatePoseTransform
 from lr import update_lr_multistep,update_lr_multistep_mine
 from src.baseline_3dpw.config import config
-from src.models_inter.model import siMLPe as Model
+from src.models_dual_inter_traj.model import siMLPe as Model
 from src.baseline_3dpw.lib.utils.logger import get_logger, print_and_log_info
 from src.baseline_3dpw.lib.utils.pyt_utils import  ensure_dir
 import torch
@@ -27,21 +27,21 @@ from lib.utils.config_3dpw import *
 from lib.utils.util import rotate_Y
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--exp-name', type=str, default="预训练：3dpw数据集,iter=200", help='=exp name')
+parser.add_argument('--exp-name', type=str, default="预训练，iter=200，no_norm,不摆正", help='=exp name')
 parser.add_argument('--dataset', type=str, default="others", help='=exp name')
 parser.add_argument('--seed', type=int, default=888, help='=seed')
 parser.add_argument('--temporal-only', action='store_true', help='=temporal only')
 parser.add_argument('--layer-norm-axis', type=str, default='spatial', help='=layernorm axis')
 parser.add_argument('--with-normalization', type=bool,default=True, help='=use layernorm')
 parser.add_argument('--spatial-fc', action='store_true', help='=use only spatial fc')
-parser.add_argument('--normalization',type=bool,default=True, help='对数据进行归一化')
+parser.add_argument('--normalization',type=bool,default=False, help='对数据进行归一化')
 parser.add_argument('--norm_way',type=str,default='first', help='=use only spatial fc')
 parser.add_argument('--permute_p', type=bool, default=False, help='排列组合P维度')
 parser.add_argument('--random_rotate', type=bool, default=False, help='围绕世界中心进行随机旋转')
 parser.add_argument('--num', type=int, default=64, help='=num of blocks')
 parser.add_argument('--interaction_interval', type=int, default=16, help='local与Global交互的间隔，必须被num整除')
 parser.add_argument('--weight', type=float, default=1., help='=loss weight')
-parser.add_argument('--device', type=str, default="cuda:2")
+parser.add_argument('--device', type=str, default="cuda:0")
 parser.add_argument('--debug', type=bool, default=False)
 parser.add_argument('--n_p', type=int, default=2)
 parser.add_argument('--model_path', type=str, default=None)
@@ -219,8 +219,9 @@ while (nb_iter + 1) < config.epoch:
         # random rotation
         input_total = rotate_Y(input_total, angle)
         input_total *= (random.random()*0.4+0.8)
+        #!摆正数据
+        # input_total[:,:,:,:,[1,2]]=input_total[:,:,:,:,[2,1]]#B,P,J,T,K
         
-        input_total[:,:,:,:,[1,2]]=input_total[:,:,:,:,[2,1]]#B,P,J,T,K
         input_total=input_total.transpose(2,3)#B,P,T,J,K
         
         # # vis for one sample

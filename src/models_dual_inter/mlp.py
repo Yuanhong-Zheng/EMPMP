@@ -114,11 +114,8 @@ class StylizationBlock(nn.Module):
         self.out_layers = nn.Sequential(
             zero_module(nn.Linear(time_dim, time_dim)),
         )
-        self.global_out_layers = nn.Sequential(
-            zero_module(nn.Linear(time_dim*num_p, time_dim*num_p)),
-        )
         self.global_emb_layers = nn.Sequential(
-            nn.Linear(time_dim*num_p, 2*time_dim*num_p),#pt->pt
+            nn.Linear(time_dim*num_p, time_dim*num_p),#pt->pt
         )
 
     def forward(self, x, x_global):
@@ -127,7 +124,7 @@ class StylizationBlock(nn.Module):
         x_global: B,D,PT
         """
         post_x=False
-        if post_x:#先更新x，用更新后的x更新x_global
+        if post_x:# Update x first, then use updated x to update x_global
             x_global_clone=x_global.clone().unsqueeze(1)#B,1,D,PT
             x_global_clone = self.emb_layers(x_global_clone)#b,1,d,2t
             # scale: B,1, d, t / shift: B,1, d, t
@@ -137,10 +134,10 @@ class StylizationBlock(nn.Module):
             x=self.norm(x)#B,P,D,T
             
             x_clone=x.clone().transpose(1,2).flatten(-2)#B,D,PT
-            shift2=self.global_shift_layer(x_clone)#B,D,PT
+            shift2=self.global_emb_layers(x_clone)#B,D,PT
             x_global=x_global+shift2
             x_global=self.norm_global(x_global)
-        else:#同步更新，用更新前的x更新x_global
+        else:# Synchronous update, use original x to update x_global
             x_clone=x.clone().transpose(1,2).flatten(-2)#B,D,PT
             x_global_clone=x_global.clone().unsqueeze(1)#B,1,D,PT
             
@@ -151,10 +148,8 @@ class StylizationBlock(nn.Module):
             x = self.out_layers(x)
             x=self.norm(x)#B,P,D,T
             
-            x_clone=self.global_emb_layers(x_clone)#B,D,2PT
-            scale2, shift2 = torch.chunk(x_clone, 2, dim=-1)
-            x_global=x_global*(1+scale2)+shift2
-            x_global=self.global_out_layers(x_global)
+            shift2=self.global_emb_layers(x_clone)#B,D,PT
+            x_global=x_global+shift2
             x_global=self.norm_global(x_global)
         return x,x_global
     
@@ -172,21 +167,21 @@ class TransMLP(nn.Module):
         ])
         self.interaction_interval=interaction_interval
     def forward(self, x):
-        # 初始化 x_global 与 x 一样
+        # Initialize x_global same as x
         x_global = x.clone().transpose(1,2).flatten(-2)#B,D,PT
         global_step = 0
 
-        # 逐层进行local和global的交互
+        # Perform local and global interaction layer by layer
         for i, local_layer in enumerate(self.local_mlps):
-            x = local_layer(x)  # 计算 local MLP
+            x = local_layer(x)  # Compute local MLP
 
-            # 每经过 interaction_interval 层 local_mlp，执行一次 global_mlp 的更新和交互
+            # Execute global_mlp update and interaction every interaction_interval local_mlp layers
             if (i + 1) % self.interaction_interval == 0 and global_step < len(self.global_mlps):
-                x_global = self.global_mlps[global_step](x_global)  # 动态计算 global MLP
-                x_new, x_global_new = self.stylization_blocks[global_step](x, x_global)  # 使用 StylizationBlock 进行交互
+                x_global = self.global_mlps[global_step](x_global)  # Dynamically compute global MLP
+                x_new, x_global_new = self.stylization_blocks[global_step](x, x_global)  # Use StylizationBlock for interaction
                 
                 x=x+x_new
-                x_global=x_global_new
+                x_global=x_global+x_global_new
                 
                 global_step += 1
         

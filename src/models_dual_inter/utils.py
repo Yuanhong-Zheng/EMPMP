@@ -8,7 +8,31 @@ import random
 import torch
 from easydict import EasyDict as edict
 from torchvision import transforms
-
+def Get_RC_Data(motion_input,motion_target):#B,P,T,JK. Create 3dpw/rc dataset, mocap/mupots dataset not needed
+    # Add velocity dimension
+    b,p,t_in,jk=motion_input.shape
+    _,_,t_out,_=motion_target.shape
+    t=t_in+t_out
+    k=3
+    j=jk//k
+    motion=torch.cat((motion_input,motion_target),dim=2).reshape(b,p,t,j,k)#B,P,T_in+T_out,J,K
+    
+    vel_data = torch.zeros((b, p, t, j,k)).to(motion.device)#b,p,T,J,3
+    vel_data[:,:,1:,:,:] = (torch.roll(motion, shifts=-1, dims=2) - motion)[:,:,:-1,:,:]# roll shifts left by one frame on time axis, the 0th frame of vel_data is 0
+    data = torch.cat((motion, vel_data), dim=-1)#B,P,T,J,6
+    data=data.transpose(1,2)#B,T,P,J,6
+            
+    camera_vel = data[:, 1:t, :, :, 3:].mean(dim=(1, 2, 3)) # B, 3
+    data[..., 3:] -= camera_vel[:, None, None, None]
+    data[..., :3] = data[:, 0:1, :, :, :3] + data[..., 3:].cumsum(dim=1)
+    
+    data=data.transpose(1,2)[...,:3].reshape(b,p,t,jk)#B,P,T,jk
+    
+    return data[:,:,:t_in],data[:,:,t_in:]
+def getRandomScaleTransform(joints_input,joints_target,r1=0.8, r2=1.2):
+    #scale = (r1 - r2) * torch.rand(1) + r2
+    scale = (r1 - r2) * torch.rand(joints_input.shape[0]).reshape(-1, 1, 1, 1) + r2
+    return joints_input * scale.to(joints_input.device), joints_target * scale.to(joints_target.device)
 def getRandomRotatePoseTransform(joints_input, joints_target):
     """
     Performs a random rotation about the origin (0, 0, 0)
@@ -90,18 +114,17 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
         
-def predict(model,h36m_motion_input,config):
+def predict(model,h36m_motion_input,config,h36m_motion_target=None):
     if config.normalization:
         h36m_motion_input_,h36m_motion_input,mean=data_normalization(h36m_motion_input,config=None,way=config.norm_way)
-        h36m_motion_input_ = torch.matmul(config.dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))#归一化后dct
+        h36m_motion_input_ = torch.matmul(config.dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))# DCT after normalization
     else:
         h36m_motion_input_ = h36m_motion_input.clone()
         #b,p,n,c
         h36m_motion_input_ = torch.matmul(config.dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))
-
     motion_pred = model(h36m_motion_input_.to(config.device))
     motion_pred = torch.matmul(config.idct_m[:, :config.dct_len, :], motion_pred)#b,p,n,c，idct
-    #反归一化
+    # Denormalization
     if config.normalization:
         motion_pred=data_denormalization(motion_pred,h36m_motion_input,mean,config)
     else:
@@ -123,20 +146,20 @@ def data_normalization(h36m_motion_input,config=None,way='all'):
     b,p,n,c = h36m_motion_input.shape
     h36m_motion_input_ = h36m_motion_input.clone()
     
-    #归一化
+    # Normalization
     h36m_motion_input_=h36m_motion_input_.reshape(b,p,n,-1,3)
     #b,p,n,c
     if way=='all':
-        mean=h36m_motion_input_[:,:,:1,:,:].mean(dim=3,keepdim=True)#第一帧的平均位置,b,p,1,1,3
+        mean=h36m_motion_input_[:,:,:1,:,:].mean(dim=3,keepdim=True)# Average position of first frame, b,p,1,1,3
     elif way=='first':
-        mean=h36m_motion_input_[:,:1,:1,:,:].mean(dim=3,keepdim=True)#第一个人第一帧的平均位置,b,1,1,1,3
+        mean=h36m_motion_input_[:,:1,:1,:,:].mean(dim=3,keepdim=True)# Average position of first person's first frame, b,1,1,1,3
     h36m_motion_input_=h36m_motion_input_-mean
-    h36m_motion_input_=h36m_motion_input_.reshape(b,p,n,-1)#回到b,p,n,c
+    h36m_motion_input_=h36m_motion_input_.reshape(b,p,n,-1)# Back to b,p,n,c
     
     h36m_motion_input=h36m_motion_input.reshape(b,p,n,-1,3)
     #b,p,n,c
     h36m_motion_input=h36m_motion_input-mean
-    h36m_motion_input=h36m_motion_input.reshape(b,p,n,-1)#回到b,p,n,c
+    h36m_motion_input=h36m_motion_input.reshape(b,p,n,-1)# Back to b,p,n,c
     
     return h36m_motion_input_,h36m_motion_input,mean
 
@@ -144,9 +167,9 @@ def data_normalization(h36m_motion_input,config=None,way='all'):
 
 def update_lr_multistep_mine(nb_iter, total_iter, max_lr, min_lr, optimizer) :
     
-    # 学习率每 10 个 iter 减为原来的 0.8
-    decay_factor = 0.8 ** (nb_iter // 10)  # 每 10 个 iter，乘以 0.8
-    current_lr = max_lr * decay_factor  # 从 max_lr 开始递减
+    # Learning rate decreases to 0.8 of original value every 10 iterations
+    decay_factor = 0.8 ** (nb_iter // 10)  # Multiply by 0.8 every 10 iterations
+    current_lr = max_lr * decay_factor  # Start decreasing from max_lr
     
     # 确保学习率不低于 min_lr
     if current_lr < min_lr:
@@ -183,7 +206,7 @@ def visuaulize(data,prefix,output_dir,input_len=30,dataset='mocap'):
     for n in range(data.shape[0]):
         #B,P,T,J,K
         data_list=data[n]
-        if dataset=='mocap':
+        if dataset=='mocap' or dataset=='mupots':
             body_edges = np.array(
                 [[0, 1], [1, 2], [2, 3], [0, 4],
                 [4, 5], [5, 6], [0, 7], [7, 8], [7, 9], [9, 10], [10, 11], [7, 12], [12, 13], [13, 14]]

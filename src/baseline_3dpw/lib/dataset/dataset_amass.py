@@ -46,11 +46,11 @@ class AMASSDatasets(Dataset):
             ['BioMotionLab_NTroje'],
         ]
 
-        # amass_splits = [
-        #     ['HumanEva'],
-        #     ['HumanEva'],
-        #     ['HumanEva'],
-        # ]
+        amass_splits = [
+            ['HumanEva'],
+            ['HumanEva'],
+            ['HumanEva'],
+        ]
 
         # load mean skeleton
         skel = np.load(skel_path)

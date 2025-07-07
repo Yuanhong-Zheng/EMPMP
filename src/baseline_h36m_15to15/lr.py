@@ -1,5 +1,5 @@
 def update_lr_multistep(nb_iter, total_iter, max_lr, min_lr, optimizer) :
-    if nb_iter > 1000000:
+    if nb_iter > 10000000:
         current_lr = 1e-5
     else:
         current_lr = 3e-4

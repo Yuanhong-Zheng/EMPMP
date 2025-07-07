@@ -1,7 +1,14 @@
-data/
-垃圾桶/
 exprs/
 runs/
 pretrain_model/
 *.[p][y][c]
 .vscode/
+data_copy/
+data/*
+!data/.gitkeep
+delete_empty_dir.py
+monitor.py
+.vscode/
+readme_cn.md
+monitor.py
+src_copy/

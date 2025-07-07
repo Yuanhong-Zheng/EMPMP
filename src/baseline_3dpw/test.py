@@ -1,7 +1,10 @@
 import torch
 import numpy as np
-from src.models.utils import AverageMeter,predict
+from src.models_dual_inter_traj_3dpw.utils import AverageMeter,predict,Get_RC_Data
 from metrics import VIM, VAM
+from src.models_dual_inter_traj_3dpw.utils import Get_RC_Data,visuaulize,paixu_person
+from src.models_dual_inter_traj_3dpw.model import inverse_sort_tensor
+import time
 
 def random_pred(config, model,iter):
     device=config.device
@@ -21,8 +24,9 @@ def random_pred(config, model,iter):
     
     h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
     h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
-    
-    motion_pred=predict(model,h36m_motion_input,config)
+    if config.rc:
+        h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
+    motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
     
     return h36m_motion_input[:1],motion_pred[:1]
 
@@ -46,8 +50,9 @@ def random_pred_pretrain(config, model,iter,joint_to_use):
     
     input_total = data_to_use.permute(0, 1, 3, 2, 4).contiguous()#B,P,J,T,K
     padding_mask=torch.ones(batch_size,2).float().to(device).bool()
+    #!摆正数据
+    # input_total[:,:,:,:,[1,2]]=input_total[:,:,:,:,[2,1]]#B,P,J,T,K
     
-    input_total[:,:,:,:,[1,2]]=input_total[:,:,:,:,[2,1]]#B,P,J,T,K
     input_total=input_total.transpose(2,3)#B,P,T,J,K
     
     h36m_motion_input=input_total[:,:,:config.t_his].flatten(-2)#16
@@ -186,6 +191,234 @@ def mpjpe_test_regress(config, model, eval_generator,dataset="mocap"):
     
     return mpjpe_res
 
+
+
+
+    # return vim_score
+
+# def cal_mpjpe(config, model):    
+#     device=config.device
+#     # dct_m=config.dct_m
+#     # idct_m=config.idct_m
+#     n_joint=config.n_joint
+    
+#     model.eval()
+
+#     loss_list1=[]
+#     loss_list2=[]
+#     loss_list3=[]
+#     mpjpe_res=[]
+    
+#     for (h36m_motion_input, h36m_motion_target) in eval_generator:
+#         h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()#b,p,t,jk
+#         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
+
+#         motion_pred = regress_pred(model,h36m_motion_input,config)#预测结果
+
+#         b,p,n,c = motion_pred.shape
+#         motion_pred = motion_pred.reshape(b,p,n,n_joint,3).cpu().detach()
+#         h36m_motion_target=h36m_motion_target.reshape(b,p,n,n_joint,3).cpu().detach()#b,p,t,j,3
+        
+#         if dataset=="mocap":
+#             loss1=torch.sqrt(((motion_pred[:,:,:10]/1.8 - h36m_motion_target[:,:,:10]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+#             loss2=torch.sqrt(((motion_pred[:,:,:20]/1.8 - h36m_motion_target[:,:,:20]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+#             loss3=torch.sqrt(((motion_pred[:,:,:30]/1.8 - h36m_motion_target[:,:,:30]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+#         else:#mupots数据集
+#             loss1=torch.sqrt(((motion_pred[:,:,:10] - h36m_motion_target[:,:,:10]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+#             loss2=torch.sqrt(((motion_pred[:,:,:20] - h36m_motion_target[:,:,:20]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+#             loss3=torch.sqrt(((motion_pred[:,:,:30] - h36m_motion_target[:,:,:30]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+#         loss1=np.mean(loss1,axis=-1).tolist()
+#         loss2=np.mean(loss2,axis=-1).tolist()
+#         loss3=np.mean(loss3,axis=-1).tolist()
+        
+#         loss_list1.extend(loss1)
+#         loss_list2.extend(loss2)
+#         loss_list3.extend(loss3)
+        
+#     mpjpe_res.append(np.mean(loss_list1))
+#     mpjpe_res.append(np.mean(loss_list2))
+#     mpjpe_res.append(np.mean(loss_list3))
+    
+#     return mpjpe_res
+
+def mpjpe_vim_test(config, model, eval_generator,is_mocap,select_vim_frames=[1, 3, 7, 9, 13],select_mpjpe_frames=[10,20,30]):    
+    def cal_vim(motion_pred,h36m_motion_target,vim_avg):    
+        #目标：b,n,p*c
+        b,p,n,c = motion_pred.shape
+        motion_pred = motion_pred.transpose(1,2).flatten(-2).squeeze(0).cpu().detach().numpy()
+        h36m_motion_target=h36m_motion_target.transpose(1,2).flatten(-2).squeeze(0).cpu().detach().numpy()
+        
+        for person in range(p):
+            # if person==1:
+            #     print("跳过第二个人")
+            #     continue
+            JK=c
+            K=3
+            J=c//K
+            i=0
+            for k in range(len(h36m_motion_target)):#k是样本索引
+                person_out_joints = h36m_motion_target[k,:,JK*person:JK*(person+1)]
+                assert person_out_joints.shape == (n, J*K)
+                person_pred_joints = motion_pred[k,:,JK*person:JK*(person+1)]
+                person_masks = np.ones((n, J))
+                
+                vim_score = VIM(person_out_joints, person_pred_joints) * 100 # *100 for 3dpw
+                vim_avg.update(vim_score, 1)
+    def cal_mpjpe(motion_pred,h36m_motion_target,is_mocap,select_frames=[10,20,30]):    
+        b,p,n,c = motion_pred.shape
+        n_joint=c//3
+        motion_pred = motion_pred.reshape(b,p,n,n_joint,3).cpu().detach()
+        h36m_motion_target=h36m_motion_target.reshape(b,p,n,n_joint,3).cpu().detach()#b,p,t,j,3
+        
+        frame1=select_frames[0]
+        frame2=select_frames[1]
+        frame3=select_frames[2]
+        if is_mocap:
+            loss1=torch.sqrt(((motion_pred[:,:,:frame1]/1.8 - h36m_motion_target[:,:,:frame1]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+            loss2=torch.sqrt(((motion_pred[:,:,:frame2]/1.8 - h36m_motion_target[:,:,:frame2]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+            loss3=torch.sqrt(((motion_pred[:,:,:frame3]/1.8 - h36m_motion_target[:,:,:frame3]/1.8) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+        else: # mupots数据集or 3dpw数据集
+            loss1=torch.sqrt(((motion_pred[:,:,:frame1] - h36m_motion_target[:,:,:frame1]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+            loss2=torch.sqrt(((motion_pred[:,:,:frame2] - h36m_motion_target[:,:,:frame2]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+            loss3=torch.sqrt(((motion_pred[:,:,:frame3] - h36m_motion_target[:,:,:frame3]) ** 2).sum(dim=-1)).mean(dim=-1).mean(dim=-1).numpy().astype(np.float64)
+        loss1=np.mean(loss1,axis=-1).tolist()
+        loss2=np.mean(loss2,axis=-1).tolist()
+        loss3=np.mean(loss3,axis=-1).tolist()
+        
+        return loss1,loss2,loss3
+    def APE(V_pred, V_trgt, frame_idx):
+        V_pred = V_pred - V_pred[:, :, :, 0:1, :]
+        V_trgt = V_trgt - V_trgt[:, :, :, 0:1, :]
+        scale = 1000
+        err = np.arange(len(frame_idx), dtype=np.float_)
+        for idx in range(len(frame_idx)):
+            err[idx] = torch.mean(torch.mean(torch.norm(V_trgt[:, :, frame_idx[idx]-1, :, :] - V_pred[:, :, frame_idx[idx]-1, :, :], dim=3), dim=2),dim=1).cpu().data.numpy().mean()
+        return err * scale
+
+    def JPE(V_pred, V_trgt, frame_idx):
+        scale = 1000
+        err = np.arange(len(frame_idx), dtype=np.float_)
+        for idx in range(len(frame_idx)):
+            err[idx] = torch.mean(torch.mean(torch.norm(V_trgt[:, :, frame_idx[idx]-1, :, :] - V_pred[:, :, frame_idx[idx]-1, :, :], dim=3), dim=2), dim=1).cpu().data.numpy().mean()
+        return err * scale
+
+    def FDE(V_pred,V_trgt, frame_idx):
+        scale = 1000
+        err = np.arange(len(frame_idx), dtype=np.float_)
+        for idx in range(len(frame_idx)):
+            err[idx] = torch.linalg.norm(V_trgt[:, :, frame_idx[idx]-1:frame_idx[idx], : 1, :] - V_pred[:, :, frame_idx[idx]-1:frame_idx[idx], : 1, :], dim=-1).mean(1).mean()
+        return err * scale
+    
+    def cal_jpe(motion_pred,h36m_motion_target,is_mocap,select_frames=[10,20,30]):    
+        b,p,n,c = motion_pred.shape
+        n_joint=c//3
+        motion_pred = motion_pred.reshape(b,p,n,n_joint,3).cpu().detach()
+        h36m_motion_target=h36m_motion_target.reshape(b,p,n,n_joint,3).cpu().detach()#b,p,t,j,3
+        
+        jpe=JPE(motion_pred,h36m_motion_target,select_frames)
+        if is_mocap:
+            jpe=jpe/1.8
+
+        return jpe
+    def cal_ape(motion_pred,h36m_motion_target,is_mocap,select_frames=[10,20,30]):    
+        b,p,n,c = motion_pred.shape
+        n_joint=c//3
+        motion_pred = motion_pred.reshape(b,p,n,n_joint,3).cpu().detach()
+        h36m_motion_target=h36m_motion_target.reshape(b,p,n,n_joint,3).cpu().detach()#b,p,t,j,3
+        
+        ape=APE(motion_pred,h36m_motion_target,select_frames)
+        if is_mocap:
+            ape=ape/1.8
+
+        return ape
+    def cal_fde(motion_pred,h36m_motion_target,is_mocap,select_frames=[10,20,30]):    
+        b,p,n,c = motion_pred.shape
+        n_joint=c//3
+        motion_pred = motion_pred.reshape(b,p,n,n_joint,3).cpu().detach()
+        h36m_motion_target=h36m_motion_target.reshape(b,p,n,n_joint,3).cpu().detach()#b,p,t,j,3
+        
+        fde=FDE(motion_pred,h36m_motion_target,select_frames)
+        if is_mocap:
+            fde=fde/1.8
+
+        return fde
+    
+    device=config.device
+    
+    vim_avg = AverageMeter()
+    
+    loss_list1=[]
+    loss_list2=[]
+    loss_list3=[]
+    mpjpe_res=[]
+    jpe_res=[]
+    ape_res=[]
+    fde_res=[]
+    
+    model.eval()
+    
+    # joint_list=[]
+    # for (joints, masks, padding_mask) in eval_generator:
+    #     h36m_motion_input=joints[:,:,:config.t_his].flatten(-2)#16
+    #     h36m_motion_target=joints[:,:,config.t_his:].flatten(-2)#14
+            
+    #     h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
+    #     h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
+        
+    #     h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
+    #     joints=torch.cat([h36m_motion_input,h36m_motion_target],dim=2).reshape(-1,2,30,13,3)
+    #     joint_list.append(joints)
+    # import pdb;pdb.set_trace()
+    # joint_list=torch.cat(joint_list,dim=0)
+    # torch.save(joint_list,'somof_test_rc.pt',_use_new_zipfile_serialization=False)
+    # start_time=time.time()
+    # batch_num=0
+    for (joints, masks, padding_mask) in eval_generator:
+        # batch_num+=1
+        h36m_motion_input=joints[:,:,:config.t_his].flatten(-2)#16
+        h36m_motion_target=joints[:,:,config.t_his:].flatten(-2)#14
+            
+        h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
+        h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
+        if config.paixu:#DCT之前
+            h36m_motion_input,h36m_motion_target,sorted_indices=paixu_person(h36m_motion_input,h36m_motion_target)
+        if config.rc:
+            h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
+        motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
+        if config.paixu:
+            motion_pred=inverse_sort_tensor(motion_pred,sorted_indices)
+            h36m_motion_target=inverse_sort_tensor(h36m_motion_target,sorted_indices)
+        cal_vim(motion_pred,h36m_motion_target,vim_avg)
+        loss1,loss2,loss3=cal_mpjpe(motion_pred,h36m_motion_target,is_mocap=is_mocap,select_frames=select_mpjpe_frames)
+        jpe=cal_jpe(motion_pred,h36m_motion_target,is_mocap=is_mocap,select_frames=select_mpjpe_frames)
+        ape=cal_ape(motion_pred,h36m_motion_target,is_mocap=is_mocap,select_frames=select_mpjpe_frames)
+        fde=cal_fde(motion_pred,h36m_motion_target,is_mocap=is_mocap,select_frames=select_mpjpe_frames)
+        
+        
+        loss_list1.extend(loss1)
+        loss_list2.extend(loss2)
+        loss_list3.extend(loss3)
+        
+        jpe_res.append(jpe)
+        ape_res.append(ape)
+        fde_res.append(fde)
+    # end_time=time.time()
+    # print('time_per_batch:********************',(end_time-start_time)/batch_num)
+    mpjpe_res.append(np.mean(loss_list1))
+    mpjpe_res.append(np.mean(loss_list2))
+    mpjpe_res.append(np.mean(loss_list3))
+    mpjpe_res=np.array(mpjpe_res)
+    
+    jpe_res=np.array(jpe_res)
+    jpe_res=np.mean(jpe_res,axis=0)
+    
+    ape_res=np.array(ape_res)
+    ape_res=np.mean(ape_res,axis=0)
+    
+    fde_res=np.array(fde_res)
+    fde_res=np.mean(fde_res,axis=0)
+    return mpjpe_res,vim_avg.avg[select_vim_frames]/1.8 if is_mocap else vim_avg.avg[select_vim_frames],jpe_res,ape_res,fde_res
+
 def vim_test(config, model, eval_generator,dataset="3dpw",return_all=True,select_frames=[1, 3, 7, 9, 13]):    
     device=config.device
     dct_m=config.dct_m
@@ -203,8 +436,9 @@ def vim_test(config, model, eval_generator,dataset="3dpw",return_all=True,select
         
         h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
-        
-        motion_pred=predict(model,h36m_motion_input,config)
+        if config.rc:
+            h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
+        motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
         #目标：b,n,p*c
         b,p,n,c = motion_pred.shape
         motion_pred = motion_pred.transpose(1,2).flatten(-2).squeeze(0).cpu().detach().numpy()
@@ -220,6 +454,7 @@ def vim_test(config, model, eval_generator,dataset="3dpw",return_all=True,select
             
             for k in range(len(h36m_motion_target)):#k是样本索引
                 if padding_mask[k,person]==0:
+                    print("*******************************************")
                     continue
                 
                 person_out_joints = h36m_motion_target[k,:,JK*person:JK*(person+1)]
@@ -237,7 +472,46 @@ def vim_test(config, model, eval_generator,dataset="3dpw",return_all=True,select
                     vim_avg.update(vim_100, 1)
     
     return vim_avg.avg[select_frames]
- 
+
+def all_vis(config, model, eval_generator,dataset="3dpw",return_all=True,select_frames=[1, 3, 7, 9, 13]):    
+    device=config.device
+    dct_m=config.dct_m
+    idct_m=config.idct_m
+
+    model.eval()
+
+    sample=0
+    for (joints, masks, padding_mask) in eval_generator:
+        sample+=1
+        if sample!=81:
+            continue
+        print(f"sample:{sample}")
+        
+        h36m_motion_input=joints[:,:,:config.t_his].flatten(-2)#16
+        h36m_motion_target=joints[:,:,config.t_his:].flatten(-2)#14
+        
+        h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
+        h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
+        if config.rc:
+            h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
+        motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
+        #目标：b,n,p*c
+        b,p,n,c = motion_pred.shape
+        motion_pred = motion_pred.reshape(b,p,n,config.n_joint,3)
+        h36m_motion_target=h36m_motion_target.reshape(b,p,n,config.n_joint,3)
+        h36m_motion_input=h36m_motion_input.reshape(b,p,config.t_his,config.n_joint,3)
+        
+        pred=torch.cat([h36m_motion_input,motion_pred],dim=2).cpu().detach().numpy()
+        gt=torch.cat([h36m_motion_input,h36m_motion_target],dim=2).cpu().detach().numpy()
+        
+        np.save(f"{config.vis_dir}/sample{sample}_pred.npy",pred)
+        # np.save(f"{config.vis_dir}/sample{sample}_gt.npy",gt)
+        # break
+        visuaulize(pred,f"sample{sample}",config.vis_dir,input_len=15,dataset='mupots')
+        # visuaulize(gt,f"gt_sample{sample}",config.vis_dir,input_len=15,dataset='mupots')
+        
+
+
 def vim_test_pretrain(config, model, test_loader,joint_to_use,dataset="3dpw",return_all=True,select_frames=[1, 3, 7, 9, 13]):  
     # print('begin vim test')  
     
@@ -259,8 +533,9 @@ def vim_test_pretrain(config, model, test_loader,joint_to_use,dataset="3dpw",ret
         
         input_total = data_to_use.permute(0, 1, 3, 2, 4).contiguous()#B,P,J,T,K
         padding_mask=torch.ones(batch_size,2).float().to(device).bool()
+        #!摆正数据
+        # input_total[:,:,:,:,[1,2]]=input_total[:,:,:,:,[2,1]]#B,P,J,T,K
         
-        input_total[:,:,:,:,[1,2]]=input_total[:,:,:,:,[2,1]]#B,P,J,T,K
         input_total=input_total.transpose(2,3)#B,P,T,J,K
         
         h36m_motion_input=input_total[:,:,:config.t_his].flatten(-2)#16
@@ -286,6 +561,7 @@ def vim_test_pretrain(config, model, test_loader,joint_to_use,dataset="3dpw",ret
             
             for k in range(len(h36m_motion_target)):#k是样本索引
                 if padding_mask[k,person]==0:
+                    print("*********************")
                     continue
                 
                 person_out_joints = h36m_motion_target[k,:,JK*person:JK*(person+1)]

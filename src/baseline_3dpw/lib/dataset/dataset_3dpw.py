@@ -111,6 +111,10 @@ def get_3dpw_dataloader(split,cfg,shuffle,batch_size=None):
         in_F, out_F = cfg.t_his, cfg.t_pred
         
         data=torch.load('data/somof_test.pt',map_location=cfg.device).float()
+        # # 如果是 Tensor，则直接保存为 numpy
+        # if isinstance(data, torch.Tensor):
+        #     np.save('./data/somof_test.npy', data.numpy())
+            
         data=data.reshape(data.shape[0],data.shape[1],in_F+out_F,-1,3)
         
         dataset_jrt = TensorDataset(data)

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-def VIM(GT, pred, dataset_name, mask):
+def VIM(GT, pred, dataset_name=None, mask=None):
     """
     Visibilty Ignored Metric
     Inputs:
@@ -15,17 +15,9 @@ def VIM(GT, pred, dataset_name, mask):
 
     gt_i_global = np.copy(GT)
 
-    if dataset_name == "posetrack":
-        mask = np.repeat(mask, 2, axis=-1)
-        errorPose = np.power(gt_i_global - pred, 2) * mask
-        #get sum on joints and remove the effect of missing joints by averaging on visible joints
-        errorPose = np.sqrt(np.divide(np.sum(errorPose, 1), np.sum(mask,axis=1)))
-        where_are_NaNs = np.isnan(errorPose)
-        errorPose[where_are_NaNs] = 0
-    else:   #3dpw
-        errorPose = np.power(gt_i_global - pred, 2)
-        errorPose = np.sum(errorPose, 1)
-        errorPose = np.sqrt(errorPose)
+    errorPose = np.power(gt_i_global - pred, 2)
+    errorPose = np.sum(errorPose, 1)
+    errorPose = np.sqrt(errorPose)
     return errorPose
 
 

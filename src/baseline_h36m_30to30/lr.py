@@ -1,4 +1,4 @@
-def update_lr_multistep(nb_iter, total_iter, max_lr, min_lr, optimizer) :
+def update_lr_multistep(nb_iter, total_iter, max_lr, min_lr, optimizer) :# Set learning rate changes here
     if nb_iter > 1000000:
         current_lr = 1e-5
     else:

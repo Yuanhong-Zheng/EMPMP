@@ -20,7 +20,7 @@ C.seed = 304
 """please config ROOT_dir and user when u first using"""
 C.abs_dir = osp.dirname(osp.realpath(__file__))
 C.this_dir = C.abs_dir.split(osp.sep)[-1]
-C.repo_name = '整理后的代码自用'
+C.repo_name = 'EMPMP_ALL'# This is the working directory
 C.root_dir = C.abs_dir[:C.abs_dir.index(C.repo_name) + len(C.repo_name)]
 
 
@@ -74,11 +74,11 @@ C.use_relative_loss = True
 C.pre_dct = False
 C.post_dct = False
 ## Motion Network mlp
-dim_ = 45
+dim_ = 45# JK dimension, mapping JK to D
 C.motion_mlp = edict()
 C.motion_mlp.hidden_dim = dim_
-C.motion_mlp.seq_len = C.motion.h36m_input_length_dct
-C.motion_mlp.num_layers = 48
+C.motion_mlp.seq_len = C.motion.h36m_input_length_dct# Number of input frames, used to set the dimension of T-dimensional linear layer
+C.motion_mlp.num_layers = 48# Number of layers
 C.motion_mlp.with_normalization = True
 C.motion_mlp.spatial_fc_only = False
 C.motion_mlp.norm_axis = 'spatial'
@@ -104,9 +104,9 @@ C.vis_every=500
 C.batch_size = 256
 C.num_workers = 8
 C.device="cuda"
-C.cos_lr_max=1e-5
-C.cos_lr_min=5e-8
-C.cos_lr_total_iters=200000
+C.cos_lr_max=1e-5# See lr.py, can be ignored
+C.cos_lr_min=5e-8# See lr.py, can be ignored
+C.cos_lr_total_iters=200000# Total number of iterations
 C.expr_dir=""
 C.weight_decay = 1e-4
 C.model_pth = None

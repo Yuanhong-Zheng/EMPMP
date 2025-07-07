@@ -63,7 +63,7 @@ def load_data_3dpw_multiperson(split):
             annotations = pickle.load(reader, encoding='latin1')
 
         if len(annotations['genders']) == 1:
-            continue
+            continue#!只使用双人数据进行训练
             one+=1
         elif len(annotations['genders']) == 2:
             two+=1
