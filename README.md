@@ -9,14 +9,12 @@
 ```bash
 pip install -r requirements.txt
 ```
-We recommend using VS Code. If using other IDEs like PyCharm, you may encounter path-related issues.
 
 ### Hardware Requirements
 We use a single NVIDIA 3090 GPU. To fully reproduce our results, we recommend using the same GPU.
 
 ### Path Configuration
-1. Ensure your current working directory is **EMPMP**. If different, modify the `C.repo_name` variable in `src/baseline_3dpw/config.py` to match your working directory name. **Note: All folders starting with "baseline" and all folders starting with "models" have almost identical code formats and are relatively independent, so you also need to modify config.py in other baseline folders.**
-2. Set `PYTHONPATH` to your working directory in `.vscode/settings.json`.
+Ensure your current working directory is **EMPMP**. If different, modify the `C.repo_name` variable in `src/baseline_3dpw/config.py` to match your working directory name. **Note: All folders starting with "baseline" and all folders starting with "models" have almost identical code formats and are relatively independent, so you also need to modify config.py in other baseline folders.**
 
 ## Data Preparation
 
@@ -87,12 +85,10 @@ bash run_all.sh
    ```bash
    python src/baseline_3dpw/train_norc.py
    ```
-   **Note: Uncomment line 224 in src/models_dual_inter_traj_3dpw/mlp.py**
 6. To reproduce **3dpw_rc** setting results, run:
    ```bash
    python src/baseline_3dpw/train_rc.py
    ```
-   **Note: Uncomment line 223 in src/models_dual_inter_traj_3dpw/mlp.py**
 7. To reproduce **Mocap15to45** setting results, run:
    ```bash
    python src/baseline_h36m_15to45/train.py
