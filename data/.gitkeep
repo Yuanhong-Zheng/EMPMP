@@ -1,0 +1,2 @@
+# This file ensures the pt_ckpts directory is preserved in git
+# Pretrained models should be downloaded from the GitHub releases 
