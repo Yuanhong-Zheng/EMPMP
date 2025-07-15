@@ -1,6 +1,6 @@
 #  [ICCV 2025] Efficient Multi-Person Motion Prediction by Lightweight Spatial and Temporal Interactions
 
-**Paper:** [arxiv]() (Coming Soon)
+**Paper:** [arxiv](https://arxiv.org/abs/2507.09446)
 
 ## Quick Start
 
