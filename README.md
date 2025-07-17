@@ -92,4 +92,18 @@ bash run_all.sh
 - The **first value** of each metric represents the **average**
 - In our paper, we **truncate data to one decimal place** (the same operation is also applied to **other models to ensure fairness**)
 
+## 📚 Citation
 
+If you find our work helpful, please cite our paper:
+
+```
+@article{arxiv250709446,
+  title={Efficient Multi-Person Motion Prediction by Lightweight Spatial and Temporal Interactions},
+  author={Anonymous},
+  journal={arXiv preprint arXiv:2507.09446},
+  year={2025},
+  archivePrefix={arXiv},
+  eprint={2507.09446},
+  primaryClass={cs.CV}
+}
+```
