@@ -98,13 +98,11 @@ bash run_all.sh
 If you find our work helpful, please cite our paper:
 
 ```
-@article{arxiv250709446,
+@inproceedings{zheng2025efficient,
   title={Efficient Multi-Person Motion Prediction by Lightweight Spatial and Temporal Interactions},
-  author={Anonymous},
-  journal={arXiv preprint arXiv:2507.09446},
-  year={2025},
-  archivePrefix={arXiv},
-  eprint={2507.09446},
-  primaryClass={cs.CV}
+  author={Zheng, Yuanhong and Yu, Ruixuan and Sun, Jian},
+  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  pages={10844--10853},
+  year={2025}
 }
 ```
